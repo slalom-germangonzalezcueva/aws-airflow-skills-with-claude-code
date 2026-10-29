@@ -1,0 +1,47 @@
+name: 02 Deploy DAGs and DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        type: choice
+        required: true
+        options: [dev, uat, prd]
+      region:
+        type: choice
+        default: "us-east-1"
+        options: ["us-east-1", "us-west-2"]
+      deployment_type:
+        type: choice
+        default: OVERWRITE
+        options: [UPDATE, OVERWRITE]
+      domain_dags_folder_path:
+        type: choice
+        default: /dags
+        options: [/dags]
+      domain_variables_folder_path:
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  migrate:
+    uses: ./.github/workflows/03-database-migration-only.yml
+    with:
+      deployment_environment: ${{ inputs.deployment_environment }}
+      region: ${{ inputs.region }}
+    secrets: inherit
+
+  deploy:
+    needs: migrate
+    uses: ./.github/workflows/01-deploy-dags.yml
+    with:
+      deployment_environment: ${{ inputs.deployment_environment }}
+      region: ${{ inputs.region }}
+      deployment_type: ${{ inputs.deployment_type }}
+      domain_dags_folder_path: ${{ inputs.domain_dags_folder_path }}
+      domain_variables_folder_path: ${{ inputs.domain_variables_folder_path }}
+    secrets: inherit

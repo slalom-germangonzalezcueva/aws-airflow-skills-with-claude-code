@@ -1,0 +1,10 @@
+.idea
+venv/
+*.pyc
+.vscode
+
+# Files made by deployment script
+plugins*.zip
+scripts/plugins*.zip
+requirements*.txt
+variables*.zip

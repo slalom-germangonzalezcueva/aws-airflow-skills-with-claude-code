@@ -1,0 +1,113 @@
+name: 01 Deploy DAGs
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        description: Target environment
+        type: choice
+        required: true
+        options: [dev, uat, prd]   # list all environments here
+      region:
+        type: choice
+        default: "us-east-1"
+        options: ["us-east-1", "us-west-2"]
+      deployment_type:
+        type: choice
+        default: OVERWRITE
+        options: [UPDATE, OVERWRITE]
+      domain_dags_folder_path:
+        type: choice
+        default: /dags
+        options: [/dags]
+      domain_variables_folder_path:
+        description: Leave empty to use /variables/<env>
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      deployment_environment: { type: string, required: true }
+      region: { type: string, default: "us-east-1" }
+      deployment_type: { type: string, default: OVERWRITE }
+      domain_dags_folder_path: { type: string, default: /dags }
+      domain_variables_folder_path: { type: string, default: "" }
+
+concurrency:
+  group: mwaa-4217-${{ inputs.deployment_environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-dags:
+    name: Dbt Dags Deployment
+    runs-on: [self-hosted, linux, dso.prd.runner]
+    environment: ${{ inputs.deployment_environment }}
+    env:
+      AppEnv: ${{ inputs.deployment_environment }}
+      region: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ctx
+        uses: ./.github/actions/mwaa-context
+        with:
+          env: ${{ inputs.deployment_environment }}
+          region: ${{ inputs.region }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/platform/workloads/UNI-AR-Github-4217-deployment
+          aws-region: ${{ inputs.region }}
+
+      - name: Load Snowflake settings from Secrets Manager
+        run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value \
+            --secret-id /4217/$AppEnv/snowflake/snowflake \
+            --region us-east-1 --query SecretString --output text)
+          echo "::add-mask::$(echo "$SECRET_JSON" | jq -r '.accesskey')"
+          {
+            echo "SNOWFLAKE_ACCOUNT=$(echo "$SECRET_JSON" | jq -r '.account')"
+            echo "SNOWFLAKE_USER=$(echo "$SECRET_JSON" | jq -r '.user')"
+            echo "SNOWFLAKE_ACCESSKEY=$(echo "$SECRET_JSON" | jq -r '.accesskey')"
+            echo "SNOWFLAKE_DATABASE=$(echo "$SECRET_JSON" | jq -r '.database')"
+            echo "SNOWFLAKE_SCHEMA=$(echo "$SECRET_JSON" | jq -r '.schema')"
+            echo "SNOWFLAKE_WAREHOUSE=$(echo "$SECRET_JSON" | jq -r '.warehouse')"
+            echo "SNOWFLAKE_THREADS=10"
+          } >> "$GITHUB_ENV"
+
+      - name: dbt deps and parse
+        run: |
+          pip install dbt-core==1.9.0 dbt-snowflake==1.9.0
+          cd dags/mexai_app/dbt
+          dbt deps
+          dbt parse
+
+      - name: Docker login (Artifactory)
+        run: echo "${{ secrets.ARTIFACTORY_PASSWORD }}" | docker login docker-prod.artifactory.unicorn-inc.example -u "${{ secrets.ARTIFACTORY_USERNAME }}" --password-stdin
+
+      - name: Deploy DAGs (uni-udp-deploy-dags)
+        env:
+          VARIABLES_PATH_INPUT: ${{ inputs.domain_variables_folder_path }}
+        run: |
+          variables_path="${VARIABLES_PATH_INPUT:-/variables/$AppEnv}"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+            -e AWS_DEFAULT_REGION="${{ inputs.region }}" \
+            -e ENVIRONMENT="$AppEnv" \
+            -e DOMAIN="4217" \
+            -e DEPLOYMENT_TYPE="${{ inputs.deployment_type }}" \
+            -e DOMAINS_DAGS_FOLDER_PATH="${{ inputs.domain_dags_folder_path }}" \
+            -e DOMAIN_VARIABLES_FOLDER_PATH="$variables_path" \
+            -e S3_BUCKET="${{ steps.ctx.outputs.s3_bucket }}" \
+            -e MWAA_NAME="${{ steps.ctx.outputs.mwaa_instance_name }}" \
+            docker-prod.artifactory.unicorn-inc.example/uni-udp-deploy-dags:3.1

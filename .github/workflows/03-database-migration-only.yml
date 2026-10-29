@@ -1,0 +1,59 @@
+name: 03 Database Migration Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        type: choice
+        required: true
+        options: [dev, uat, prd]
+      region:
+        type: choice
+        default: "us-east-1"
+        options: ["us-east-1", "us-west-2"]
+  workflow_call:
+    inputs:
+      deployment_environment: { type: string, required: true }
+      region: { type: string, default: "us-east-1" }
+
+concurrency:
+  group: mwaa-4217-${{ inputs.deployment_environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  database-migration:
+    name: Database Migration
+    runs-on: [self-hosted, linux, dso.prd.runner]
+    environment: ${{ inputs.deployment_environment }}
+    env:
+      AppEnv: ${{ inputs.deployment_environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/platform/workloads/UNI-AR-Github-4217-deployment
+          aws-region: ${{ inputs.region }}
+
+      - name: Docker login (Artifactory)
+        run: echo "${{ secrets.ARTIFACTORY_PASSWORD }}" | docker login docker.artifactory.unicorn-inc.example -u "${{ secrets.ARTIFACTORY_USERNAME }}" --password-stdin
+
+      - name: Flyway (uni-flyway-pipe)
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+            -e env="$AppEnv" \
+            -e flyway_actions="info,repair,migrate" \
+            -e aws_region="${{ inputs.region }}" \
+            -e aws_role_arn="arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/platform/workloads/UNI-AR-Github-4217-deployment" \
+            -e database_config_file="flyway/config.yaml" \
+            -e flyway_config_file="flyway/snowflake_flyway_${AppEnv}.conf" \
+            -e dbms_type="snowflake" \
+            -e auth_type="pat" \
+            unicorndso/uni-flyway-pipe:1.2.0

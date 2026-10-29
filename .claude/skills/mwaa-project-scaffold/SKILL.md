@@ -1,6 +1,6 @@
 ----
 name: mwaa-project-scaffold
-description: Scafold a complete Unicorn Inc MWAA (Amazon Managed Workflows for Apache Airflow) project from an empty repo. Collects project variables via questionnaire, then creates the full repo structure: Github pipeline, dbt project scaffold, Airflow DAG template, utility modules, per-environment Airflow Variables, Flyway configuration, and session memory - all following best practices and domain code conventions. Triggers: scaffold mawaa, new airflow project, mwaa scafild, create airflow project, scaffold mwaa project, new mwaa repo.
+description: Scafold a complete Unicorn Inc MWAA (Amazon Managed Workflows for Apache Airflow) project from an empty repo. Collects project variables via questionnaire, then creates the full repo structure: GitHub Actions workflows, dbt project scaffold, Airflow DAG template, utility modules, per-environment Airflow Variables, Flyway configuration, and session memory - all following best practices and domain code conventions. Triggers: scaffold mawaa, new airflow project, mwaa scafild, create airflow project, scaffold mwaa project, new mwaa repo.
 ----
 
 # MWAA Project Scaffold
@@ -34,9 +34,9 @@ Before writing any files, collect ALL required variables. Present them as a chec
 | Variable | Description | Example |
 |---|---|---|
 | `SNOWFLAKE_SCHEMA` | Target Snowflake schema name | `<PROJECT_FOLDER upper-cased>` |
-| `DEV_DEV_NAME` | DEV Snowflake database placeholder | `DEV_<PROJECT_FOLDER upper-cased>` |
-| `UAT_DEV_NAME` | UAT Snowflake database placeholder | `UAT_<PROJECT_FOLDER upper-cased>` |
-| `PRD_DEV_NAME` | PRD Snowflake database placeholder | `PRD_<PROJECT_FOLDER upper-cased>` |
+| `DEV_DB_NAME` | DEV Snowflake database placeholder | `DEV_<PROJECT_FOLDER upper-cased>` |
+| `UAT_DB_NAME` | UAT Snowflake database placeholder | `UAT_<PROJECT_FOLDER upper-cased>` |
+| `PRD_DB_NAME` | PRD Snowflake database placeholder | `PRD_<PROJECT_FOLDER upper-cased>` |
 | `ENVIRONMENTS` | Comma-separated environment list | `dev,uat,prd` |
 | `AIRFLOW_VERSION` | MWAA Airflow version | `3.0.6` |
 | `PRIMARY_REGION` | Primary AWS region for the MWAA environment | `us-east-1` |
@@ -50,6 +50,7 @@ Deployment IAM role:   UNI-AR-Github-{DOMAIN_CODE}-deployment
 MWAA env name:         uni-<env>-{DOMAIN_CODE}-managed-airflow-ue1
 S3 DAG bucket:         uni-<env>-{DOMAIN_CODE}-managed-airflow-code-ue1
 Snowflake secret path: /{DOMAIN_CODE}/<env>/snowflake/snowflake
+GitHub Environments:   dev, uat, prd (one per ENVIRONMENTS entry)
 Flyway history table:  uni-{DOMAIN_CODE}-airflow-schema-history
 ```
 
@@ -111,6 +112,11 @@ node_modules/
 
 # Local
 /Dockerfile
+.memory/
+
+# Offline wheels (generated in CI by scripts/refresh_mwaa_wheels.sh)
+plugins/*.whl
+.venv-mwaa-preflight/
 ```
 
 ### 1.2 `__init__.py`
@@ -171,28 +177,45 @@ See `references/requirements.md` for the full pinned package list. Do **not** in
 Empty file.
 
 
-### 1.8 `bitbucket-pipelines.yml`
+### 1.8 GitHub Actions workflows (`.github/`)
 
-See `references/bitbucketpipelines.md` for the full pipeline template.
+See `references/pipeline.md` for the full workflow templates (5 workflow files plus a composite action).
+
+Files to create:
+
+- `.github/actions/mwaa-context/action.yml` - composite action deriving region code, S3 bucket and MWAA env name
+- `.github/workflows/01-deploy-dags.yml`
+- `.github/workflows/02-deploy-dags-and-db-migration.yml` _(Flyway only)_
+- `.github/workflows/03-database-migration-only.yml` _(Flyway only)_
+- `.github/workflows/04-deploy-plugins-and-restart.yml`
+- `.github/workflows/05-restart-environment.yml`
 
 Key substitutions:
 
 - `{DOMAIN_CODE}` -> the actual domain code for the project
 - `{PROJECT_FOLDER}` -> the folder name of the project within the `dags` directory
-- `{APPLICATION_CI}` -> the application name
 - `{PRIMARY_REGION}` -> the primary AWS region for the deployment
-- `allowed-values` for `DEPLOY_ENVIRONMENT` -> list of allowed deployment environments (e.g., dev, staging, prod)
-- `&deploy_db_scripts_to_flyway_pipe` anchor and pipelines 02/03 -> omit if `INCLUDE_FLYWAY=no`
+- `{AIRFLOW_VERSION}` -> the MWAA Airflow version
+- `options` of the `deployment_environment` input -> the values of `ENVIRONMENTS` (e.g. dev, uat, prd)
+- workflows 02 and 03, and the `workflow_call` trigger on 01 -> omit if `INCLUDE_FLYWAY=no`
 
-The result is always **5 pipelines** (or 3 without Flyway):
+The result is always **5 workflows** (or 3 without Flyway):
 
 - `01 Deploy DAGs`
 - `02 Deploy DAGs and DB Migration` _(Flyway only)_
-- `03 Database MIgration Only` _(Flyway only)_
+- `03 Database Migration Only` _(Flyway only)_
 - `04 Deploy Plugins and Restart`
 - `05 Restart Environment`
 
-`AppEnv` is set via `export AppEnv=$DEPLOYMENT_ENVIRONMENT` at the top of each step script. No `deployment: ENV` Bitbucket annotations are used. `AWS_ACCOUNT_ID` is resolved at runtime via `eval "AWS_ACCOUNT_ID=\$awsaccountid_$AppEnv}"` using workspace variables.
+All workflows are `workflow_dispatch` (manual) and take a `deployment_environment` choice input. Each job sets `environment: ${{ inputs.deployment_environment }}` and `AppEnv` from it. `AWS_ACCOUNT_ID` is read from the GitHub Environment variable `vars.AWS_ACCOUNT_ID`, and AWS access uses OIDC through `aws-actions/configure-aws-credentials` (workflow 05 uses environment secrets, as the original pipeline did). Tell the user to create the GitHub Environments, the `AWS_ACCOUNT_ID` variable per environment, and the `ARTIFACTORY_USERNAME` / `ARTIFACTORY_PASSWORD` repository secrets.
+
+### 1.9 `plugins/.gitkeep`
+
+Empty file. Plugins live in a **top-level** `plugins/` directory, never under `dags/`. See `references/plugins.md`. Also create `plugins/README.md` documenting the Airflow 3.x plugin rules from that file.
+
+### 1.10 `scripts/`
+
+Create `scripts/refresh_mwaa_wheels.sh` and `scripts/mwaa_requirements_preflight.py` from `references/scripts.md`.
 
 ---
 
@@ -237,7 +260,7 @@ For each environment in `ENVIRONMENTS`, create `dags/configurations/airflow_conf
 
 Same as above but `"celery.worker_autoscale": "4,4"`
 
-**prod** (mw1.small - 6 workers max):
+**prd** (mw1.small - 6 workers max):
 
 Same as above but `"celery.worker_autoscale": "6,2"`
 
@@ -249,7 +272,7 @@ For each environment in `ENVIRONMENTS`, create `dags/configurations/env_class_co
 |-------------|-----------|-------------|-------------|------------|
 | dev         | mw1.micro | 1           | 2           | 1          |
 | uat         | mw1.small | 1           | 4           | 1          |
-| prod        | mw1.small | 2           | 6           | 1          |
+| prd         | mw1.small | 2           | 6           | 1          |
 
 **mw1.micro enforces ALL five values to 1. The pipe validates them in order and fails on the first violation - so you see one error per run untill all are correct.**
 
@@ -285,7 +308,7 @@ Format (small/medium):
 
 Create the following under `dags/{PROJECT_FOLDER}/dbt`:
 
-**`bdt_project.yml`:**
+**`dbt_project.yml`:**
 
 ```yaml
 name: '{PROJECT_FOLDER}'
@@ -306,7 +329,7 @@ clean-targets:
     - "dbt_modules"
 
 models:
-    +tramsient: false
+    +transient: false
     +copy_grants: true
     +query_tag: dbt
 
@@ -317,13 +340,13 @@ tests:
 vars:
     default_hist_load_days: -30
     run_only_with_param_dates: False
-    {PROJECT_FOLDER}_db_name: "{DB_NAME}"
+    {PROJECT_FOLDER}_db_name: "{DEV_DB_NAME}"
     {PROJECT_FOLDER}_schema_name: "{SNOWFLAKE_SCHEMA}"
 
 require-dbt-version: ">=1.9.0"
 ```
 
-**`profile.yml`:**
+**`profiles.yml`:**
 
 ```yaml
 {DBT_PROFILE_NAME}:
@@ -371,7 +394,7 @@ logs/
 
 **`__init__.py`:**
 
-**Empty stub directories** (with `.gitjkeep`):
+**Empty stub directories** (with `.gitkeep`):
 
 `models/`, `macros/`, `snapshots/`, `seeds/`, `tests/`, `analysis/`
 
@@ -383,12 +406,12 @@ logs/
 - Use `schedule=` (NOT `schedule_interval` - removed in 3.x)
 - Import `datetime` from `datetime` direclty, not from `airflow.utils.dates`
 
-Create `dags/{PROJECT_FOLDER}/dags/__init__.py` (empty) and `dags/{PROJECT_FOLDER}/dags/{DAG_REFIX}_basic_dag.py`:
+Create `dags/{PROJECT_FOLDER}/dags/__init__.py` (empty) and `dags/{PROJECT_FOLDER}/dags/{DAG_PREFIX}_basic_dag.py`:
 
 See `references/dag-template.md` for the full stub DAG template. Key substitutions:
 
 - `{PROJECT_FOLDER}` -> Replace with your project folder name.
-- `{DAG_REFIX}` -> Replace with the desired prefix for your DAG file.
+- `{DAG_PREFIX}` -> Replace with the desired prefix for your DAG file.
 - `{SNOWFLAKE_CONN_ID}` -> Replace with the Snowflake connection ID used in Airflow.
 - `{DOMAIN_CODE}` -> Replace with the domain code used in your project.
 - Tags: `["{DOMAIN_CODE}", "{PROJECT_FOLDER}"]`
@@ -430,7 +453,7 @@ def set_path(dbt_project):
         os.makedirs(f"/tmp/target/{dbt_project}", exist_ok=True)
         os.environ["DBT_TARGET_PATH"] = f"/tmp/target"
 
-def get_time_window_expression(deg):
+def get_time_window_expression(dag):
     start_time = dag.latest_execution_date
     end_time = datetime.now() + timedelta(hours=1)
     if start_time is None:
@@ -440,7 +463,7 @@ def get_time_window_expression(deg):
 
 ### 3.5 `dags/utils_uni/{PROJECT_FOLDER}/uda_{DAG_PREFIX}_connection_util.py`
 
-See `references/connection-util.md` for the full template. Key substitutions:
+See `references/connection-utils.md` for the full template. Key substitutions:
 
 - `{SNOWFLAKE_CONN_ID}` -> Replace with the Snowflake connection ID used in Airflow.
 
@@ -482,7 +505,7 @@ For each environment in `ENVIRONMENTS`, create `variables/{env}`:
 }
 ```
 
-Where `{failure_email}` is `""` for non-prod and `"{SUPPORT_EMAIL}"` for prd. 
+Where `{failure_email}` is `""` for non-prd and `"{SUPPORT_EMAIL}"` for prd. 
 
 `{Env}` is titled-cased (Dev, Uat, Prd).
 
@@ -536,7 +559,7 @@ Where `{env_db_name}` is `DEV_DB_NAME` for dev, `UAT_DB_NAME` for uat, and `PRD_
 }
 ```
 
-Where `{raise_incident}` is `false` for non-prd, true for prod.
+Where `{raise_incident}` is `false` for non-prd, `true` for prd.
 
 ## Phase 5: Flyway (if `INCLUDE_FLYWAY=yes`)
 
@@ -576,7 +599,7 @@ prd:
 
 ```
 flyway.schemas=
-flyway.table=uni-{DOMAIN_CONDE}-airflow-schema-history
+flyway.table=uni-{DOMAIN_CODE}-airflow-schema-history
 flyway.locations=flyway/sql
 flyway.placeholders.env={env}
 flyway.baselineOnMigrate=true
@@ -597,13 +620,13 @@ response = load_config(filepath)
 with open("./export_vars", "w") as f:
     for key, value in response.items():
         if "SNOWFLAKE" in key.upper():
-            f.writelines(f'export {key.upper().replace(".", "_")}={value}')
+            f.writelines(f'export {key.upper().replace(".", "_")}={value}\n')
 ```
 
 ### 5.4 `flyway/flyway-requirements.txt`
 
 ```
-uda-core-dataload=1.2.0
+uda-core-dataload==1.2.0
 ```
 
 ### 5.5 `flyway/sql/.gitkeep`
@@ -612,7 +635,7 @@ Empty placeholder - migrations go here as `V<YYYY.MM.DD.NN>__<description>.sql`
 
 ## Phase 6: Documentation & Memory
 
-### 6.1 `pr-template.md`
+### 6.1 `.github/pull_request_template.md`
 
 ```markdown
 ## Jira Ticket
@@ -649,7 +672,8 @@ Create a README documenting:
 - Environment table (class + DR status for each env)
 - Repository structure (tree diagram)
 - Naming conventions table (DAG files, connection, Variables JSON, Flyway)
-- Deploying Section (list of Bitbucket pipelines names and what they do)
+- Deploying section (list of GitHub Actions workflow names and what they do)
+- Required GitHub configuration (Environments, `AWS_ACCOUNT_ID` variable, Artifactory secrets, IAM trust policy)
 - Placeholder replacement section (database names that need updating before first deploy
 
 ### 6.3 Memory Files
@@ -696,7 +720,7 @@ Expected:
 ### 7.2 Verify the active requirements payload in S3
 
 ```bash
-aws s3 cp s3://uni-<env>-{DOMAIN_CODE}-managed-airflow-code-ue1.{DOMAIN_CODE}/requirements.txt - \
+aws s3 cp s3://uni-<env>-{DOMAIN_CODE}-managed-airflow-code-ue1/requirements/requirements.txt - \
     --profile {DOMAIN_CODE}-<env> \
     --region {PRIMARY_REGION} \
     --no-cli-pager
@@ -771,7 +795,7 @@ Important:
 
 ### 7.6 Snowflake provider class compatibility (Ariflow 3.0.6)
 
-`apache-airflow-providers-snowflake=6.4.0` does not include `SnowflakeOperator`.
+`apache-airflow-providers-snowflake==6.4.0` does not include `SnowflakeOperator`.
 
 Use one of:
 
@@ -808,30 +832,29 @@ Use local preflight before deploy:
 | Using `DummyOperator` | Use `EmptyOperator` — `DummyOperator` was removed in Airflow 3.x |
 | Using `schedule_interval=` | Use `schedule=` — `schedule_interval` was removed in Airflow 3.x |
 | `from airflow.utils.dates import datetime` | Use `from datetime import datetime` directly |
-| Wrong env class in config JSON | sbx/dev = `mw1.micro`, uat/prd = `mw1.small` (default Terraform sizing) |
-| Forgetting `sbx` environment | Domain 4217 pattern uses sbx/dev/uat/prd (no `qa`) |
+| Wrong env class in config JSON | dev = `mw1.micro`, uat/prd = `mw1.small` (default Terraform sizing) |
 | Wrong Snowflake secret path | Path is `/{DOMAIN_CODE}/<env>/snowflake/snowflake`, NOT the old `/0042/<env>/LEGACYWH/`
 | Adding `apache-airflow-providers-airbyte` | Only include if the project actually uses Airbyte |
-| DB name placeholders in prod variables | Placeholders (`DEV_MEXAI_LEDGER` etc.) must be replaced with real Snowflake DB names before first deploy |
-| Per-env pipeline definitions | Do NOT create `deploy_dags_to_dev`, `deploy_dags_to_uat` etc. Use the 5-pipeline pattern with `DEPLOYMENT_ENVIRONMENT` instead |
-| `deployment: DEV/UAT/PRD` annotations | Do NOT add these — they are not used. AppEnv comes from `export AppEnv=$DEPLOYMENT_ENVIRONMENT` |
+| DB name placeholders in prd variables | Placeholders (`DEV_MEXAI_LEDGER` etc.) must be replaced with real Snowflake DB names before first deploy |
+| One workflow per environment | Do NOT create `deploy-dev.yml`, `deploy-uat.yml` etc. Use the 5-workflow pattern; `AppEnv` and `environment:` come from the `deployment_environment` input |
 | `domain` as a pipeline variable | `domain` is hardcoded to `"{DOMAIN_CODE}"` in the pipe variables, not a pipeline variable |
 | Bare `requirements.txt` in .gitignore | Use `/requirements.txt` (root-anchored) — bare pattern matches `requirements/requirements.txt` and prevents it from being committed |
-| `$ARTIFACTORY_USER` in docker login | The workspace variable is `$ARTIFACTORY_USERNAME` (matches infra pipeline). `$ARTIFACTORY_USER` is always empty → Bad Credentials |
+| `ARTIFACTORY_USER` in docker login | The secret is `ARTIFACTORY_USERNAME` (matches infra pipeline). `secrets.ARTIFACTORY_USER` is always empty → Bad Credentials |
 | Using selective `domain_dags_folder_path` | Always use `/dags` as the only allowed value. Deploying just `/dags/{PROJECT_FOLDER}` leaves `utils_uni/` out of S3 → `ModuleNotFoundError` at runtime. One path, one sync, no partial deploys. |
 | UDP core files fail on Airflow 3.x | The `uni-udp-deploy-dags` pipe auto-deploys UDP core utilities (e.g. `udp_notification_manager.py`, `udp_servicenow_integration_manager.py`) that import `from airflow.hooks.base_hook import BaseHook` — removed in Airflow 3.x. These are not in your repo; raise a compatibility ticket with the DSO/UDP team to update the pipe for Airflow 3.x. |
 | Using UDP plugin operators (`UNIS3ToSnowflakeTransfer`, `UNISnowflakeToSnowflakeTransfer`) | These UDP plugin classes are not available in Airflow 3.x MWAA. Replace with `SnowflakeOperator` from `apache-airflow-providers-snowflake`. For S3-to-Snowflake loads, use `SnowflakeOperator` with a `COPY INTO` SQL statement (pass `storage_integration`, `file_format`, `s3_keys` as SQL params). |
 | `dag=dag` on operators | Removed in Airflow 3.x. Use `with dag:` context manager instead. |
-| Wiz scan failing with no credentials | The `&wizscan` step scans the deployment pipe image (`uni-udp-deploy-dags:3.1`) for CVEs — it does NOT scan project code. Requires `WIZ_CLIENT_ID`, `WIZ_CLIENT_SECRET`, `WIZ_PROJECT_ID`, `WIZ_IMAGE_VUL_SCAN_POLICY` workspace variables. If the scan fails on policy violations, the pipe image itself has CVEs — contact the UDP team for an updated image or a Wiz policy exception. |
+| Wiz scan failing with no credentials | If a Wiz scan step is added, it scans the deployment pipe image (`uni-udp-deploy-dags:3.1`) for CVEs — it does NOT scan project code. Requires `WIZ_CLIENT_ID`, `WIZ_CLIENT_SECRET`, `WIZ_PROJECT_ID`, `WIZ_IMAGE_VUL_SCAN_POLICY` repository secrets. If the scan fails on policy violations, the pipe image itself has CVEs — contact the UDP team for an updated image or a Wiz policy exception. |
 | Pinning `SQLAlchemy` or `werkzeug` in requirements.txt | For Airflow 3.x MWAA, `werkzeug==2.2.3` conflicts with Flask 3.x (requires >=3.1), `SQLAlchemy==1.4.54` conflicts with Airflow 3.x (uses 2.x). Remove both.| 
 | pip backtracking 30+ min on Airflow 3.x deps | Pin the key transitive packages that pip backtracks through: `fastapi==0.115.12`, `fastapi-cli==0.0.31`, `typing-inspection==0.4.3`. The `uni-udp-deploy-plugins` pipe processes requirements.txt line-by-line — do NOT use `--constraint "URL"` directives, they get passed directly to pip as arguments and produce `Usage: pip3 [options]`. |
 | Using wrong Airflow constraints URL (e.g. `constraints-2.7.2/constraints-3.11.txt`) | Match both runtime versions: use `https://raw.githubusercontent.com/apache/airflow/constraints-<AIRFLOW_VERSION>/constraints-<PYTHON_VERSION>.txt` (for MWAA Airflow 3.0.6/Python 3.12: `constraints-3.0.6/constraints-3.12.txt`). Align Snowflake/Amazon pins to that file before deploy. |
-| Missing `dags/plugins/` directory | The `uni-udp-deploy-plugins` pipe always tries to `cd dags/plugins/`. Create `dags/plugins/.gitkeep` even if the project has no custom plugins — the pipe handles empty gracefully and deploys UDP core plugins via `DEPLOY_UDP_CORE_PLUGINS: "True"`. |
-| `*` wildcard in YAML case statement | A line starting with `*` on a YAML continuation is parsed as an alias indicator, producing an empty script item. Use a single-line expression: `export short_region=$([ "$region" = "us-west-2" ] && echo "uw2" \|\| echo "ue1")` |
-| `#` inside double-quoted YAML strings | Bitbucket's validator treats `#` as a comment even inside `"..."`, silently discarding the rest. Keep echo strings free of `#` and avoid `===` / `:` patterns |
-| `AWS_OIDC_ROLE_ARN_` workspace variables | Not needed. Construct the ARN from `AWS_ACCOUNT_ID`: `export OIDC_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/platform/workloads/UNI-AR-Bitbucket-{DOMAIN_CODE}-deployment"` |
+| Plugins under `dags/plugins/` | Plugins live in a top-level `plugins/` directory (create `plugins/.gitkeep` even with no custom plugins). Under `dags/` the DAG sync pushes them to the DAGs S3 path where Airflow imports them as DAGs and poisons `sys.modules`. See `references/plugins.md`. |
+| Untrusted `${{ inputs.* }}` inside `run:` scripts | Free-text inputs interpolated into shell are an injection risk. Pass them through `env:` and reference the shell variable. Use `type: choice` wherever the values are known |
+| Missing `permissions: id-token: write` | OIDC role assumption fails with `Credentials could not be loaded`. Add it at workflow or job level (workflow 05 uses keys and does not need it) |
+| Per-environment role ARN variables | Not needed. Construct the ARN from the Environment variable: `arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/platform/workloads/UNI-AR-Github-{DOMAIN_CODE}-deployment` |
 | Missing `dbt deps` before `dbt parse` | `dbt parse` fails if `dbt_packages/` is absent. Always run `dbt deps` first in the pipeline script |
-| Repo UUID not in IAM trust policy | The deployment role's trust policy in `terraform-aws-{DOMAIN_CODE}-app-init/configurations/global.tfvars` must include the new repo's `BITBUCKET_REPO_UUID`. Add it and re-apply `configurations/10_iam_roles` or every OIDC call returns AccessDenied |
+| Repo not in IAM trust policy | The deployment role's trust policy in `terraform-aws-{DOMAIN_CODE}-app-init/configurations/global.tfvars` must trust GitHub's OIDC provider for `repo:<org>/<repo>:environment:<env>` (the `sub` claim). Add it and re-apply `configurations/10_iam_roles` or every OIDC call returns AccessDenied |
+| Pipes are Bitbucket Pipes | `uni-udp-deploy-*` and `uni-flyway-pipe` are run with `docker run` and plain AWS credentials. Confirm with the UDP/DSO team that the pipe versions work outside Bitbucket |
 | `ImportError: cannot import name 'SnowflakeOperator'` with provider 6.4.0 | `SnowflakeOperator` was removed. Import `SnowflakeSqlApiOperator` (or `SQLExecuteQueryOperator`) from `airflow.providers.snowflake.operators.snowflake`. |
 | MWAA requirements update is `SUCCESS` but DAG still fails with `missing_snowflake_provider`/connection errors | Re-run from a fresh DAG run and inspect current worker stream. This usually indicates runtime config mismatch, not unresolved requirements. |
 | `Connection with ID mexai_snowflake not found` | Create/update the Airflow Connection in MWAA UI, or override `snowflake_conn_id` via DAG Variable JSON to match an existing conn ID. |
@@ -847,7 +870,7 @@ Use local preflight before deploy:
 Trigger this skill with:
 
 - `scaffold mwaa project`
-- `mew airflow project`
+- `new airflow project`
 - `mwaa scaffold`
 - `/mwaa-project-scaffold`
 
@@ -870,7 +893,7 @@ aws mwaa get-environment \
 2. Confirm active requirements in MWAA S3 bucket:
 
 ```bash
-aws s3 cp s3://uni-dev-4217-managed-airflow-ue1/4217/requirements.txt requirements.txt \
+aws s3 cp s3://uni-dev-4217-managed-airflow-code-ue1/requirements/requirements.txt requirements.txt \
   --profile 4217-dev \
   --region us-east-1 \
   --no-cli-pager
@@ -883,7 +906,7 @@ aws logs describe-log-groups \
   --region us-east-1 \
   --profile 4217-dev \
   --no-cli-pager \
-  --log-group-name-prefix uni-dev-4217-managed-airflow-ue1 \
+  --log-group-name-prefix airflow-uni-dev-4217-managed-airflow-ue1 \
   --query 'logGroups[].logGroupName' \
   --output text
 ```
@@ -942,25 +965,25 @@ Skill asks:
   SUPPORT_EMAIL: german.gonzalezcueva@slalom.com
 
 Derived values shown for confirmation:
-  IAM role: UNI-AR-Bitbucket-4217-deployment
+  IAM role: UNI-AR-Github-4217-deployment
   MWAA env: uni-<env>-4217-managed-airflow-ue1
   S3 bucket: uni-<env>-4217-managed-airflow-code-ue1
   Secret: /4217/<env>/snowflake/snowflake
-  Flyway table: uni-4217-managed-airflow-schema-history
+  Flyway table: uni-4217-airflow-schema-history
 
 Phases:
   Phase 0: Gather variables + confirmation
-  Phase 1: Core infrastructure (pipeline, gitignore, uda_core, requirement)
+  Phase 1: Core infrastructure (workflows, gitignore, uda_core, requirements, plugins, scripts)
            -> Use domain_dags_folder_path=/dags on first deployment to sync
              both mexai_app/ and utils_uni/ in one shot.
-           -> bitbucket-pipelines.yml has 5 pipelines:
+           -> .github/workflows has 5 workflows:
              01 Deploy DAGs
              02 Deploy DAGs and DB Migration
              03 Database Migration Only
              04 Deploy Plugins and Restart
              05 Restart Environment
-             All use DEPLOYMENT_ENVIRONMENT variable (dev,uat,prd),
-             no deployment: ENV annotations - matches infra pipeline pattern.
+             All use the deployment_environment input (dev,uat,prd)
+             mapped to a GitHub Environment of the same name.
   Phase 2: DAGs folder (configuration, dbg scaffold, stub DAG)
   Phase 3: Utility modules (dag_util, connection_util, default_config)
   Phase 4: Airflow Variables (per-env JSON files)
@@ -984,34 +1007,35 @@ Apply these defaults for new scaffolds unless the user explicitly opts out.
 
 - Treat MWAA environments as **no-egress by default** for pip install at runtime.
 - Generate wheels in CI during plugin deploy (do not store wheel binaries in the repo).
-- Add `plugins/*.whl` and `.venv-mwaa-preflight/` to `.gitignore`.
+- Add `plugins/*.whl` and `.venv-mwaa-preflight/` to `.gitignore` (already in 1.1).
 - Keep `requirements/requirements.txt` limited to direct deps only.
 - For Airflow 3.0.6 / Python 3.12 baseline use:
   - `apache-airflow-providers-amazon`
-  - `apache-airflow-providers-snowflake=6.4.0`
-  - `snowflake-connector-python=3.17.2`
-  - `boto3=1.39.11`, `s3fs=2025.7.0`, `fsspec==2025.7.0`, `openpyxl==3.1.5`
+  - `apache-airflow-providers-snowflake==6.4.0`
+  - `snowflake-connector-python==3.17.2`
+  - `boto3==1.39.11`, `s3fs=2025.7.0`, `fsspec==2025.7.0`, `openpyxl==3.1.5`
 
 ### Required scaffold file
 
-Always create:
+Always create (source in `references/scripts.md`):
 
 - `scripts/refresh_mwaa_wheels.sh`
+- `scripts/mwaa_requirements_preflight.py`
 
 This script should:
 
 1. Clear existing `plugins/*.whl` files.
-2. Download Snowflake provider + connector wheels.
+2. Download Snowflake provider + connector wheels into the top-level `plugins/` directory.
 3. Download provider-required runtime wheels for offline install (e.g. `pandas`, `numpy`, `pyarrow`, `python-dateutil`, `pytz`, `tzdata`, `six`).
 4. Download connector transitive wheels (`cryptography`, `cffi`, `pyopenssl`, `requests`, etc.)
 5. Run `scripts/mwaa_requirements_preflight.py --skip-resolver` for static constraint checks.
 
 ### Pipeline defaults
 
-In `bitbucket-pipelines.yml`, plugin deploy steps must:
+In `.github/workflows/04-deploy-plugins-and-restart.yml`, the plugin deploy job must:
 
-- use `image: python:3.12-slim`.
-- run `bash scripts/refresh_mwaa_wheels.sh` before `uni-udp-deploy-plugins` pipe.
+- use `actions/setup-python` with `python-version: "3.12"`.
+- run `bash scripts/refresh_mwaa_wheels.sh` before the `uni-udp-deploy-plugins` container.
 
 ### Deployment sequencing guardrail
 

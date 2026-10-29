@@ -1,0 +1,33 @@
+name: 'mexai_app'
+version: '1.0.0'
+config-version: 2
+
+profile: '4217-mexai-app'
+
+model-paths: ["models"]
+analysis-paths: ["analysis"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+    - "{{ env_var('DBT_TARGET_PATH', 'target') }}/mexai_app"
+    - "dbt_modules"
+
+models:
+    +transient: false
+    +copy_grants: true
+    +query_tag: dbt
+
+tests:
+    +store_failures: true
+    +schema: MEXAI_APP_DBT_TEST_RESULTS
+
+vars:
+    default_hist_load_days: -30
+    run_only_with_param_dates: False
+    mexai_app_db_name: "DEV_MEXAI_APP"
+    mexai_app_schema_name: "MEXAI_APP"
+
+require-dbt-version: ">=1.9.0"

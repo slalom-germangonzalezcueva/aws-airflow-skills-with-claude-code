@@ -1,0 +1,8 @@
+{
+  "class": "mw1.small",
+  "min_workers": 2,
+  "max_workers": 6,
+  "schedulers": 2,
+  "min_webservers": 2,
+  "max_webservers": 2
+}

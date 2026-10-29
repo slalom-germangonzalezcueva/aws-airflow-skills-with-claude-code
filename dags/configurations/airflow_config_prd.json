@@ -1,0 +1,14 @@
+{
+  "core.max_active_runs_per_dag": "1",
+  "core.default_task_retries": "1",
+  "celery.worker_autoscale": "6,2",
+  "core.fallback_to_env_variables": "True",
+  "smtp.smtp_host": "smtp.unicor-inc.example",
+  "smtp.smtp_mail_from": "germanngc+claudeai@gmail.com",
+  "smtp.smtp_ssl": "False",
+  "smtp.smtp_starttls": "True",
+  "celery.task_adoption_timeout": "1800",
+  "scheduler.min_file_process_interval": "300",
+  "core.enable_xcom_pickling": "True",
+  "webserver.show_trigger_form_if_no_params": "True"
+}

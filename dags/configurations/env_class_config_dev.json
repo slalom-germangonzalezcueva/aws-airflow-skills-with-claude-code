@@ -1,0 +1,8 @@
+{
+  "class": "mw1.micro",
+  "min_workers": 1,
+  "max_workers": 1,
+  "schedulers": 1,
+  "min_webservers": 1,
+  "max_webservers": 1
+}

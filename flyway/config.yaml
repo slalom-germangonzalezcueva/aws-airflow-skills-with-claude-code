@@ -1,0 +1,27 @@
+dev:
+  db.secrets: "/4217/dev/snowflake/snowflake"
+  db.account: "unicorn_dev.us-east-1.privatelink"
+  db.database: "DEV_MEXAI_APP"
+  db.user: "DEV_MEXAI_APP_SYSADMIN_USER"
+  db.warehouse: "DEV_MEXAI_APP_SYSADMIN_WH"
+  db.schema: "MEXAI_APP"
+  db.thread: 10
+  db.role: "UNI-G-APP-SF-DEV_MEXAI_APP-SYSADMIN"
+uat:
+  db.secrets: "/4217/uat/snowflake/snowflake"
+  db.account: "unicorn_uat.us-east-1.privatelink"
+  db.database: "UAT_MEXAI_APP"
+  db.user: "UAT_MEXAI_APP_SYSADMIN_USER"
+  db.warehouse: "UAT_MEXAI_APP_SYSADMIN_WH"
+  db.schema: "MEXAI_APP"
+  db.thread: 10
+  db.role: "UNI-G-APP-SF-UAT_MEXAI_APP-SYSADMIN"
+prd:
+  db.secrets: "/4217/prd/snowflake/snowflake"
+  db.account: "unicorn_prd.us-east-1.privatelink"
+  db.database: "PRD_MEXAI_APP"
+  db.user: "PRD_MEXAI_APP_SYSADMIN_USER"
+  db.warehouse: "PRD_MEXAI_APP_SYSADMIN_WH"
+  db.schema: "MEXAI_APP"
+  db.thread: 10
+  db.role: "UNI-G-APP-SF-PRD_MEXAI_APP-SYSADMIN"

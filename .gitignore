@@ -1,0 +1,55 @@
+# Pipeline runtime artifacts
+**/.pipeline/phase_*_evidence.json
+**/.pipeline/schema_override.yml
+
+/plugin.zip
+/variables_*.zip
+
+# Python
+*.py[cod]
+*.pyc
+__pycache__/
+venv/
+myvenv
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.class
+*.jar
+*.war
+dist/
+target/
+node_modules/
+
+# Logs
+*.log
+
+# Deploy artifacts (root-level generated files only)
+/plugins*.zip
+/scripts/plugins*.zip
+/requirements*.txt
+/variables*.zip
+
+# dbt generated
+/dags/mexai_app/models/edr_target/
+/dags/mexai_app/target/
+/dags/mexai_app/dbt_packages/
+/dags/mexai_app/dbt/target/
+/dags/mexai_app/dbt/dbt_packages/
+/dags/mexai_app/dbt/logs/
+
+# Local
+/Dockerfile
+.memory/
+
+# Offline wheels (generated in CI by scripts/refresh_mwaa_wheels.sh)
+plugins/*.whl
+.venv-mwaa-preflight/

@@ -1,0 +1,7 @@
+{
+  "uda_mexai_app_vars": {
+    "dags_loaded": false,
+    "dag_schedule": "0 12 * * *",
+    "snowflake_conn_id": "mexai_snowflake"
+  }
+}

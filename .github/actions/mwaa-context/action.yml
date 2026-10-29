@@ -1,0 +1,27 @@
+name: MWAA context
+description: Derive region code, S3 bucket and MWAA environment name
+inputs:
+  env:
+    description: Deployment environment (dev, uat, prd)
+    required: true
+  region:
+    description: AWS region
+    required: true
+outputs:
+  short_region:
+    value: ${{ steps.derive.outputs.short_region }}
+  mwaa_instance_name:
+    value: ${{ steps.derive.outputs.mwaa_instance_name }}
+  s3_bucket:
+    value: ${{ steps.derive.outputs.s3_bucket }}
+runs:
+  using: composite
+  steps:
+    - id: derive
+      shell: bash
+      run: |
+        IFS=- read -r a b c <<< "${{ inputs.region }}"
+        short_region="${a:0:1}${b:0:1}${c:0:1}"
+        echo "short_region=$short_region" >> "$GITHUB_OUTPUT"
+        echo "mwaa_instance_name=uni-${{ inputs.env }}-4217-managed-airflow-${short_region}" >> "$GITHUB_OUTPUT"
+        echo "s3_bucket=uni-${{ inputs.env }}-4217-managed-airflow-code-${short_region}" >> "$GITHUB_OUTPUT"

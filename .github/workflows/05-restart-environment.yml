@@ -1,0 +1,61 @@
+name: 05 Restart Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        type: choice
+        required: true
+        options: [dev, uat, prd]
+      region:
+        type: choice
+        default: "us-east-1"
+        options: ["us-east-1", "us-west-2"]
+      refresh_plugins_requirements:
+        type: choice
+        default: "true"
+        options: ["true", "false"]
+
+concurrency:
+  group: mwaa-4217-${{ inputs.deployment_environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  restart-environment:
+    name: Restart Environment
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.deployment_environment }}
+    env:
+      AppEnv: ${{ inputs.deployment_environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ctx
+        uses: ./.github/actions/mwaa-context
+        with:
+          env: ${{ inputs.deployment_environment }}
+          region: ${{ inputs.region }}
+
+      - name: Docker login (Artifactory)
+        run: echo "${{ secrets.ARTIFACTORY_PASSWORD }}" | docker login docker-prod.artifactory.unicorn-inc.example -u "${{ secrets.ARTIFACTORY_USERNAME }}" --password-stdin
+
+      - name: Restart MWAA (uni-udp-deploy-restart)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_DEFAULT_REGION="${{ inputs.region }}" \
+            -e DEBUG="true" \
+            -e MWAA_INSTANCE_NAME="${{ steps.ctx.outputs.mwaa_instance_name }}" \
+            -e ENVIRONMENT="$AppEnv" \
+            -e DOMAIN="4217" \
+            -e REFRESH_PLUGIN_REQUIREMENTS="${{ inputs.refresh_plugins_requirements }}" \
+            -e DOMAIN_CONFIG_FILE_PATH="/dags/configurations/airflow_config_${AppEnv}.json" \
+            -e DOMAIN_ENV_CLASS_CONFIG_FILE_PATH="/dags/configurations/env_class_config_${AppEnv}.json" \
+            docker-prod.artifactory.unicorn-inc.example/uni-udp-deploy-restart:1.3

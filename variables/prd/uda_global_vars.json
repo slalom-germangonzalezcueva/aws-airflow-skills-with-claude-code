@@ -1,0 +1,8 @@
+{
+  "uda_global_vars": {
+    "dag_schedule": "0 12 * * *",
+    "send_failures_email_to": "germanngc+claudeai@gmail.com",
+    "airflow_env": "Prd",
+    "email_support": "germanngc+claudeai@gmail.com"
+  }
+}

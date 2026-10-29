@@ -1,0 +1,134 @@
+name: 04 Deploy Plugins and Restart
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        type: choice
+        required: true
+        options: [dev, uat, prd]
+      region:
+        type: choice
+        default: "us-east-1"
+        options: ["us-east-1", "us-west-2"]
+
+concurrency:
+  group: mwaa-4217-${{ inputs.deployment_environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-plugins:
+    name: "Preflight: Validate Plugins"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install "apache-airflow==3.0.6"
+          pip install -r requirements/requirements.txt
+      - name: Syntax check
+        run: |
+          shopt -s nullglob
+          files=(plugins/*.py)
+          if [ ${#files[@]} -gt 0 ]; then python -m py_compile "${files[@]}"; fi
+          echo "Syntax check passed"
+      - name: Import check
+        run: |
+          cat > /tmp/validate_plugins.py << 'PYEOF'
+          import sys, importlib.util, pathlib, os
+          os.environ.setdefault("AIRFLOW_HOME", "/tmp/airflow")
+          sys.path.insert(0, "plugins")
+          errors = []
+          for f in sorted(pathlib.Path("plugins").glob("*.py")):
+              if f.name.startswith("_"):
+                  continue
+              try:
+                  spec = importlib.util.spec_from_file_location(f.stem, str(f))
+                  mod = importlib.util.module_from_spec(spec)
+                  spec.loader.exec_module(mod)
+                  print(f"  PASS  {f.name}")
+              except Exception as e:
+                  print(f"  FAIL  {f.name}: {e}")
+                  errors.append(f.name)
+          if errors:
+              print(f"\nPlugin validation failed for: {errors}")
+              sys.exit(1)
+          print("All plugins validated successfully")
+          PYEOF
+          python /tmp/validate_plugins.py
+
+  deploy-plugins:
+    name: Deploy Plugins and Restart
+    needs: validate-plugins
+    runs-on: [self-hosted, linux, dso.prd.runner]
+    environment: ${{ inputs.deployment_environment }}
+    env:
+      AppEnv: ${{ inputs.deployment_environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ctx
+        uses: ./.github/actions/mwaa-context
+        with:
+          env: ${{ inputs.deployment_environment }}
+          region: ${{ inputs.region }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build wheels for offline install
+        run: bash scripts/refresh_mwaa_wheels.sh
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/platform/workloads/UNI-AR-Github-4217-deployment
+          aws-region: ${{ inputs.region }}
+
+      - name: Remove stale dags/plugins from S3
+        run: |
+          echo "Plugins live at top-level plugins/, not dags/plugins/"
+          aws s3 rm "s3://${{ steps.ctx.outputs.s3_bucket }}/4217/dags/plugins/" --recursive --region "${{ inputs.region }}" || true
+
+      - name: Docker login (Artifactory)
+        run: echo "${{ secrets.ARTIFACTORY_PASSWORD }}" | docker login docker-prod.artifactory.unicorn-inc.example -u "${{ secrets.ARTIFACTORY_USERNAME }}" --password-stdin
+
+      - name: Deploy plugins (uni-udp-deploy-plugins)
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+            -e AWS_DEFAULT_REGION="${{ inputs.region }}" \
+            -e ENVIRONMENT="$AppEnv" \
+            -e DOMAIN="4217" \
+            -e S3_BUCKET="${{ steps.ctx.outputs.s3_bucket }}" \
+            -e DOMAINS_PLUGINS_FOLDER_PATH="/plugins" \
+            -e DEPLOY_UDP_CORE_PLUGINS="False" \
+            -e DOMAINS_REQUIREMENTS_FILE_PATH="/requirements" \
+            docker-prod.artifactory.unicorn-inc.example/uni-udp-deploy-plugins:2.2
+
+      - name: Restart MWAA (uni-udp-deploy-restart)
+        run: |
+          echo "Restarting the mwaa env ${{ steps.ctx.outputs.mwaa_instance_name }}"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+            -e AWS_DEFAULT_REGION="${{ inputs.region }}" \
+            -e DEBUG="true" \
+            -e MWAA_INSTANCE_NAME="${{ steps.ctx.outputs.mwaa_instance_name }}" \
+            -e ENVIRONMENT="$AppEnv" \
+            -e DOMAIN="4217" \
+            -e REFRESH_PLUGINS_REQUIREMENTS="true" \
+            -e DOMAIN_CONFIG_FILE_PATH="/dags/configurations/airflow_config_${AppEnv}.json" \
+            -e DOMAIN_ENV_CLASS_CONFIG_FILE_PATH="/dags/configurations/env_class_config_${AppEnv}.json" \
+            docker-prod.artifactory.unicorn-inc.example/uni-udp-deploy-restart:1.3

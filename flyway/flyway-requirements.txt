@@ -1,0 +1,1 @@
+uda-core-dataload==1.2.0

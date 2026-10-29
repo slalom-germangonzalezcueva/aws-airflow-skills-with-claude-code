@@ -1,0 +1,10 @@
+{
+  "uda_dbt_global_vars": {
+    "dbt_project_vars": {
+      "mexai_app_db_name": "DEV_MEXAI_APP",
+      "mexai_app_schema_name": "MEXAI_APP",
+      "default_hist_load_days": -30,
+      "run_only_with_param_dates": "False"
+    }
+  }
+}

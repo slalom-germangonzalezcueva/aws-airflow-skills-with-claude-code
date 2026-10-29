@@ -73,11 +73,11 @@ dag_metadata = Variable.get("my_dag", deserialize_json=True)
 dag_metadata = Variable.get("my_dag", default_var={}, deserialize_json=True)
 ```
 
-If a variable is required and has no sensible default, ensure it is deployed via `variables/{env}/` and the pipeline runs with `DOMAIN_VARIABLES_FOLDER_PATH` set.
+If a variable is required and has no sensible default, ensure it is deployed via `variables/{env}/` and the DAG deploy workflow runs with `DOMAIN_VARIABLES_FOLDER_PATH` set.
 
 ## Preflight validation
 
-The `04 Deploy Plugins and Restart` pipeline runs a `&validate_plugins` step before deploying. It:
+The `04 Deploy Plugins and Restart` workflow runs a `validate-plugins` job before deploying. It:
 
 1. Installs from `requirements/requirements.txt` (matching the MWAA environment)
 2. Runs `python -m py_compile` on every plugin file (syntax check)

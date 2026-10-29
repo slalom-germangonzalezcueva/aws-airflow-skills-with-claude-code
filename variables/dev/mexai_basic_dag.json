@@ -1,0 +1,16 @@
+{
+  "mexai_basic_dag": {
+    "max_active_runs": 1,
+    "uda_env": "dev",
+    "send_failures_email_to": "",
+    "email_support": "germanngc+claudeai@gmail.com",
+    "region": "us-east-1",
+    "snowflake_conn_id": "mexai_snowflake",
+    "dbt_run_cmd": "",
+    "dbt_base_cmd": "--select ",
+    "servicenow_config": {
+      "env": "dev",
+      "raise_incident": false
+    }
+  }
+}
